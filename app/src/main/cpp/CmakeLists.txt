@@ -1,0 +1,72 @@
+cmake_minimum_required(VERSION 3.22.1)
+
+project(vsmile_android CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Undefine Android system macros that conflict with veesem's register names
+add_compile_options(
+    -UREG_R0 -UREG_R1 -UREG_R2 -UREG_R3 -UREG_R4 -UREG_R5 -UREG_R6 -UREG_R7
+)
+
+# Optimization flags for better performance (same as desktop veesem)
+add_compile_options(-O3 -ffast-math)
+
+# Build veesem core library (platform-independent)
+add_library(veesem_core STATIC
+    veesem/src/core/common.h
+    veesem/src/core/spg200/adc.cc
+    veesem/src/core/spg200/adc.h
+    veesem/src/core/spg200/adpcm.cc
+    veesem/src/core/spg200/adpcm.h
+    veesem/src/core/spg200/bus_interface.h
+    veesem/src/core/spg200/cpu.cc
+    veesem/src/core/spg200/cpu.h
+    veesem/src/core/spg200/dma.cc
+    veesem/src/core/spg200/dma.h
+    veesem/src/core/spg200/extmem.cc
+    veesem/src/core/spg200/extmem.h
+    veesem/src/core/spg200/gpio.cc
+    veesem/src/core/spg200/gpio.h
+    veesem/src/core/spg200/irq.cc
+    veesem/src/core/spg200/irq.h
+    veesem/src/core/spg200/ppu.cc
+    veesem/src/core/spg200/ppu.h
+    veesem/src/core/spg200/random.cc
+    veesem/src/core/spg200/random.h
+    veesem/src/core/spg200/spg200.cc
+    veesem/src/core/spg200/spg200.h
+    veesem/src/core/spg200/spg200_io.h
+    veesem/src/core/spg200/spu.cc
+    veesem/src/core/spg200/spu.h
+    veesem/src/core/spg200/timer.cc
+    veesem/src/core/spg200/timer.h
+    veesem/src/core/spg200/types.h
+    veesem/src/core/spg200/uart.cc
+    veesem/src/core/spg200/uart.h
+    veesem/src/core/vsmile/vsmile.cc
+    veesem/src/core/vsmile/vsmile.h
+    veesem/src/core/vsmile/vsmile_common.h
+    veesem/src/core/vsmile/vsmile_joy.cc
+    veesem/src/core/vsmile/vsmile_joy.h
+)
+
+target_include_directories(veesem_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/veesem/src
+)
+
+# Android bridge library (JNI interface to veesem)
+add_library(vsmile_android SHARED
+    android_bridge/jni_bridge.cpp
+)
+
+target_include_directories(vsmile_android PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/veesem/src
+)
+
+target_link_libraries(vsmile_android
+    veesem_core
+    android
+    log
+)
