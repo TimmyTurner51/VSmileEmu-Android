@@ -7,7 +7,7 @@ I got near-constant 60-61 FPS while testing on Redmagic 10 Pro. It's likely it'l
 
 Enjoy another way to play VSmile games on the go!
 
-Setup:
+First-time Setup:
 - Select (or make) a folder in which the emulator will use.
 - The emulator will create folders in that folder:
     bios
