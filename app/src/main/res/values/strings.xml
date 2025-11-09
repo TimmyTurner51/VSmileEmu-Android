@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VSmile Emulator</string>
+    
+    <!-- Setup Wizard -->
+    <string name="setup_welcome_title">Welcome to VSmile Emulator</string>
+    <string name="setup_welcome_subtitle">Let\'s get you set up in just a few steps</string>
+    <string name="setup_continue">Continue</string>
+    <string name="setup_skip">Skip</string>
+    
+    <string name="setup_storage_title">Choose Storage Location</string>
+    <string name="setup_storage_subtitle">Select a folder where VSmile will store games and saves</string>
+    <string name="setup_select_folder">Select Folder</string>
+    <string name="setup_use_default">Use Default Location</string>
+    
+    <string name="setup_scanning_title">Setting Up</string>
+    <string name="setup_scanning_subtitle">Creating folders and scanning for files…</string>
+    <string name="setup_creating_folders">Creating necessary folders…</string>
+    <string name="setup_scanning_roms">Scanning for ROMs…</string>
+    <string name="setup_scanning_bios">Checking for BIOS files…</string>
+    
+    <string name="setup_bios_title">BIOS Setup</string>
+    <string name="setup_bios_found">✓ BIOS found</string>
+    <string name="setup_bios_not_found">✗ No BIOS found</string>
+    <string name="setup_bios_instructions">Place vsmile_bios.bin in the bios folder</string>
+    <string name="setup_open_folder">Open Folder</string>
+    <string name="setup_browse_bios">Browse for BIOS</string>
+    <string name="setup_bios_optional">Note: BIOS is optional. A basic dummy BIOS will be used if not provided.</string>
+    
+    <string name="setup_complete_title">All Set!</string>
+    <string name="setup_complete_games_found">Found %1$d game(s)</string>
+    <string name="setup_complete_no_games">No games found. Add ROM files to the roms folder.</string>
+    <string name="setup_get_started">Get Started</string>
+    
+    <!-- Home Screen -->
+    <string name="home_title">Games</string>
+    <string name="home_no_games">No games found</string>
+    <string name="home_add_games">Add ROM files to:\n%1$s</string>
+    <string name="home_scan_games">Scan for Games</string>
+    <string name="home_bios_status">BIOS: %1$s</string>
+    <string name="home_bios_found">Found</string>
+    <string name="home_bios_missing">Missing (using dummy)</string>
+    
+    <!-- Game Card -->
+    <string name="game_play">Play</string>
+    <string name="game_last_played">Last played: %1$s</string>
+    <string name="game_never_played">Never played</string>
+    <string name="game_has_save">Has save data</string>
+    
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_general">General</string>
+    <string name="settings_storage_location">Storage Location</string>
+    <string name="settings_change_storage">Change</string>
+    <string name="settings_emulation">Emulation</string>
+    <string name="settings_video_timing">Video Timing</string>
+    <string name="settings_video_timing_pal">PAL (50 Hz)</string>
+    <string name="settings_video_timing_ntsc">NTSC (60 Hz)</string>
+    <string name="settings_audio">Audio</string>
+    <string name="settings_audio_enabled">Enable Audio</string>
+    <string name="settings_audio_volume">Volume</string>
+    <string name="settings_controller">Controller</string>
+    <string name="settings_controller_opacity">Virtual Controller Opacity</string>
+    <string name="settings_controller_size">Controller Size</string>
+    <string name="settings_haptic_feedback">Haptic Feedback</string>
+    <string name="settings_advanced">Advanced</string>
+    <string name="settings_show_fps">Show FPS Counter</string>
+    <string name="settings_fast_forward">Enable Fast Forward</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_licenses">Open Source Licenses</string>
+    <string name="settings_reset_app">Reset App</string>
+    <string name="settings_reset_confirm">This will run the setup wizard again. Continue?</string>
+    
+    <!-- Emulation Screen -->
+    <string name="emulation_pause">Pause</string>
+    <string name="emulation_resume">Resume</string>
+    <string name="emulation_save_state">Save State</string>
+    <string name="emulation_load_state">Load State</string>
+    <string name="emulation_screenshot">Screenshot</string>
+    <string name="emulation_exit">Exit</string>
+    <string name="emulation_exit_confirm">Exit game? Unsaved progress will be lost.</string>
+    <string name="emulation_fps">FPS: %1$.1f</string>
+    
+    <!-- Errors -->
+    <string name="error_generic">An error occurred</string>
+    <string name="error_no_storage_permission">Storage permission required</string>
+    <string name="error_invalid_rom">Invalid or corrupted ROM file</string>
+    <string name="error_rom_load_failed">Failed to load ROM</string>
+    <string name="error_emulator_init_failed">Failed to initialize emulator</string>
+    
+    <!-- Common -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="close">Close</string>
+    <string name="back">Back</string>
+</resources>
+
+
+
+
+
+
+
+
