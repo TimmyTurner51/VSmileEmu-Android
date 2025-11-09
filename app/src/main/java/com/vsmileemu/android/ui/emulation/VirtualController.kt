@@ -20,6 +20,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vsmileemu.android.controller.ColorButtonAnchor
+import com.vsmileemu.android.controller.ColorButtonLayout
 import com.vsmileemu.android.native_bridge.ControllerInput
 import kotlin.math.hypot
 import kotlin.math.max
@@ -42,7 +44,9 @@ fun VirtualController(
     onInputChange: (ControllerInput) -> Unit,
     opacity: Float = 0.7f,
     size: Float = 1.0f,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    colorLayout: ColorButtonLayout,
+    colorAnchor: ColorButtonAnchor
 ) {
     var currentInput by remember { mutableStateOf(ControllerInput.EMPTY) }
     
@@ -130,63 +134,13 @@ fun VirtualController(
         }
         
         // Right side - Color buttons
-        Column(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = (32 * size).dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy((16 * size).dp)
-        ) {
-            // Top row: Red and Yellow
-            Row(
-                horizontalArrangement = Arrangement.spacedBy((16 * size).dp)
-            ) {
-                ColorButton(
-                    color = Color(0xFFE53935),
-                    text = "🔴",
-                    size = size,
-                    pressed = currentInput.red,
-                    onPressedChange = { pressed ->
-                        currentInput = currentInput.copy(red = pressed)
-                    }
-                )
-                
-                ColorButton(
-                    color = Color(0xFFFFC107),
-                    text = "🟡",
-                    size = size,
-                    pressed = currentInput.yellow,
-                    onPressedChange = { pressed ->
-                        currentInput = currentInput.copy(yellow = pressed)
-                    }
-                )
-            }
-            
-            // Bottom row: Blue and Green
-            Row(
-                horizontalArrangement = Arrangement.spacedBy((16 * size).dp)
-            ) {
-                ColorButton(
-                    color = Color(0xFF2196F3),
-                    text = "🔵",
-                    size = size,
-                    pressed = currentInput.blue,
-                    onPressedChange = { pressed ->
-                        currentInput = currentInput.copy(blue = pressed)
-                    }
-                )
-                
-                ColorButton(
-                    color = Color(0xFF43A047),
-                    text = "🟢",
-                    size = size,
-                    pressed = currentInput.green,
-                    onPressedChange = { pressed ->
-                        currentInput = currentInput.copy(green = pressed)
-                    }
-                )
-            }
-        }
+        ColorButtonsSection(
+            layout = colorLayout,
+            anchor = colorAnchor,
+            size = size,
+            input = currentInput,
+            onInputChange = { currentInput = it }
+        )
     }
 }
 
@@ -266,6 +220,172 @@ private fun ColorButton(
     }
 }
 
+@Composable
+private fun BoxScope.ColorButtonsSection(
+    layout: ColorButtonLayout,
+    anchor: ColorButtonAnchor,
+    size: Float,
+    input: ControllerInput,
+    onInputChange: (ControllerInput) -> Unit
+) {
+    val alignment = when (anchor) {
+        ColorButtonAnchor.LEFT -> Alignment.CenterStart
+        ColorButtonAnchor.CENTER -> Alignment.Center
+        ColorButtonAnchor.RIGHT -> Alignment.CenterEnd
+    }
+    val horizontalPadding = (32 * size).dp
+    val baseModifier = Modifier
+        .align(alignment)
+        .padding(
+            start = if (anchor == ColorButtonAnchor.LEFT) horizontalPadding else 0.dp,
+            end = if (anchor == ColorButtonAnchor.RIGHT) horizontalPadding else 0.dp
+        )
+
+    when (layout) {
+        ColorButtonLayout.GRID -> {
+            Column(
+                modifier = baseModifier,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy((16 * size).dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy((16 * size).dp)) {
+                    ColorButton(
+                        color = Color(0xFFE53935),
+                        text = "🔴",
+                        size = size,
+                        pressed = input.red,
+                        onPressedChange = { pressed ->
+                            onInputChange(input.copy(red = pressed))
+                        }
+                    )
+                    ColorButton(
+                        color = Color(0xFFFFC107),
+                        text = "🟡",
+                        size = size,
+                        pressed = input.yellow,
+                        onPressedChange = { pressed ->
+                            onInputChange(input.copy(yellow = pressed))
+                        }
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy((16 * size).dp)) {
+                    ColorButton(
+                        color = Color(0xFF2196F3),
+                        text = "🔵",
+                        size = size,
+                        pressed = input.blue,
+                        onPressedChange = { pressed ->
+                            onInputChange(input.copy(blue = pressed))
+                        }
+                    )
+                    ColorButton(
+                        color = Color(0xFF43A047),
+                        text = "🟢",
+                        size = size,
+                        pressed = input.green,
+                        onPressedChange = { pressed ->
+                            onInputChange(input.copy(green = pressed))
+                        }
+                    )
+                }
+            }
+        }
+        ColorButtonLayout.HORIZONTAL -> {
+            Row(
+                modifier = baseModifier,
+                horizontalArrangement = Arrangement.spacedBy((16 * size).dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ColorButton(
+                    color = Color(0xFFE53935),
+                    text = "🔴",
+                    size = size,
+                    pressed = input.red,
+                    onPressedChange = { pressed ->
+                        onInputChange(input.copy(red = pressed))
+                    }
+                )
+                ColorButton(
+                    color = Color(0xFFFFC107),
+                    text = "🟡",
+                    size = size,
+                    pressed = input.yellow,
+                    onPressedChange = { pressed ->
+                        onInputChange(input.copy(yellow = pressed))
+                    }
+                )
+                ColorButton(
+                    color = Color(0xFF2196F3),
+                    text = "🔵",
+                    size = size,
+                    pressed = input.blue,
+                    onPressedChange = { pressed ->
+                        onInputChange(input.copy(blue = pressed))
+                    }
+                )
+                ColorButton(
+                    color = Color(0xFF43A047),
+                    text = "🟢",
+                    size = size,
+                    pressed = input.green,
+                    onPressedChange = { pressed ->
+                        onInputChange(input.copy(green = pressed))
+                    }
+                )
+            }
+        }
+        ColorButtonLayout.DIAMOND -> {
+            Column(
+                modifier = baseModifier,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy((12 * size).dp)
+            ) {
+                ColorButton(
+                    color = Color(0xFFE53935),
+                    text = "🔴",
+                    size = size,
+                    pressed = input.red,
+                    onPressedChange = { pressed ->
+                        onInputChange(input.copy(red = pressed))
+                    }
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy((64 * size).dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ColorButton(
+                        color = Color(0xFF43A047),
+                        text = "🟢",
+                        size = size,
+                        pressed = input.green,
+                        onPressedChange = { pressed ->
+                            onInputChange(input.copy(green = pressed))
+                        }
+                    )
+                    ColorButton(
+                        color = Color(0xFFFFC107),
+                        text = "🟡",
+                        size = size,
+                        pressed = input.yellow,
+                        onPressedChange = { pressed ->
+                            onInputChange(input.copy(yellow = pressed))
+                        }
+                    )
+                }
+                ColorButton(
+                    color = Color(0xFF2196F3),
+                    text = "🔵",
+                    size = size,
+                    pressed = input.blue,
+                    onPressedChange = { pressed ->
+                        onInputChange(input.copy(blue = pressed))
+                    }
+                )
+            }
+        }
+    }
+}
+
 /**
  * Virtual joystick with analog movement
  */
@@ -295,12 +415,19 @@ private fun VirtualJoystick(
                 detectDragGestures(
                     onDragEnd = {
                         stickOffset = Offset.Zero
+                        onJoystickMove(0, 0)
                     },
                     onDragCancel = {
                         stickOffset = Offset.Zero
+                        onJoystickMove(0, 0)
                     }
                 ) { change, dragAmount ->
                     change.consume()
+                    if (!change.pressed) {
+                        stickOffset = Offset.Zero
+                        onJoystickMove(0, 0)
+                        return@detectDragGestures
+                    }
                     val newOffset = stickOffset + dragAmount
                     val distance = hypot(newOffset.x, newOffset.y)
                     

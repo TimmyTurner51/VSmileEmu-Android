@@ -7,8 +7,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.vsmileemu.android.controller.ColorButtonAnchor
+import com.vsmileemu.android.controller.ColorButtonLayout
+import com.vsmileemu.android.controller.ControllerAction
 import com.vsmileemu.android.data.model.EmulatorConfig
 import com.vsmileemu.android.data.model.VideoTiming
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +36,11 @@ class AppPreferences(private val context: Context) {
         private val CONTROLLER_SIZE = floatPreferencesKey("controller_size")
         private val HAPTIC_FEEDBACK = booleanPreferencesKey("haptic_feedback")
         private val PIXEL_SCALE = stringPreferencesKey("pixel_scale")
+        private val HIDE_CONTROLLER_WHEN_EXTERNAL = booleanPreferencesKey("hide_controller_when_external")
+        private val CONTROLLER_LAYOUT = stringPreferencesKey("controller_layout")
+        private val CONTROLLER_ANCHOR = stringPreferencesKey("controller_anchor")
+        private fun controllerMappingKey(action: ControllerAction) =
+            intPreferencesKey("controller_mapping_${action.name.lowercase()}")
     }
     
     val setupCompleted: Flow<Boolean> = context.dataStore.data.map { preferences ->
@@ -75,7 +84,8 @@ class AppPreferences(private val context: Context) {
             fastForwardEnabled = preferences[FAST_FORWARD] ?: true,
             controllerOpacity = preferences[CONTROLLER_OPACITY] ?: 0.7f,
             controllerSize = preferences[CONTROLLER_SIZE] ?: 1.0f,
-            hapticFeedback = preferences[HAPTIC_FEEDBACK] ?: true
+            hapticFeedback = preferences[HAPTIC_FEEDBACK] ?: true,
+            hideVirtualControllerWhenExternal = preferences[HIDE_CONTROLLER_WHEN_EXTERNAL] ?: false
         )
     }
     
@@ -89,6 +99,7 @@ class AppPreferences(private val context: Context) {
             preferences[CONTROLLER_OPACITY] = config.controllerOpacity
             preferences[CONTROLLER_SIZE] = config.controllerSize
             preferences[HAPTIC_FEEDBACK] = config.hapticFeedback
+            preferences[HIDE_CONTROLLER_WHEN_EXTERNAL] = config.hideVirtualControllerWhenExternal
         }
     }
     
@@ -121,6 +132,63 @@ class AppPreferences(private val context: Context) {
     suspend fun setPixelScale(scale: String) {
         context.dataStore.edit { preferences ->
             preferences[PIXEL_SCALE] = scale
+        }
+    }
+
+    val hideVirtualControllerWhenExternal: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[HIDE_CONTROLLER_WHEN_EXTERNAL] ?: false
+    }
+
+    suspend fun setHideVirtualControllerWhenExternal(hide: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[HIDE_CONTROLLER_WHEN_EXTERNAL] = hide
+        }
+    }
+
+    val controllerLayout: Flow<ColorButtonLayout> = context.dataStore.data.map { preferences ->
+        preferences[CONTROLLER_LAYOUT]?.let { runCatching { ColorButtonLayout.valueOf(it) }.getOrNull() }
+            ?: ColorButtonLayout.GRID
+    }
+
+    suspend fun setControllerLayout(layout: ColorButtonLayout) {
+        context.dataStore.edit { preferences ->
+            preferences[CONTROLLER_LAYOUT] = layout.name
+        }
+    }
+
+    val controllerAnchor: Flow<ColorButtonAnchor> = context.dataStore.data.map { preferences ->
+        preferences[CONTROLLER_ANCHOR]?.let { runCatching { ColorButtonAnchor.valueOf(it) }.getOrNull() }
+            ?: ColorButtonAnchor.RIGHT
+    }
+
+    suspend fun setControllerAnchor(anchor: ColorButtonAnchor) {
+        context.dataStore.edit { preferences ->
+            preferences[CONTROLLER_ANCHOR] = anchor.name
+        }
+    }
+
+    val controllerMappings: Flow<Map<ControllerAction, Int>> = context.dataStore.data.map { preferences ->
+        ControllerAction.entries.associateWith { action ->
+            preferences[controllerMappingKey(action)] ?: action.defaultKeyCode
+        }
+    }
+
+    suspend fun setControllerMapping(action: ControllerAction, keyCode: Int) {
+        context.dataStore.edit { preferences ->
+            ControllerAction.entries.forEach { other ->
+                if (preferences[controllerMappingKey(other)] == keyCode && other != action) {
+                    preferences.remove(controllerMappingKey(other))
+                }
+            }
+            preferences[controllerMappingKey(action)] = keyCode
+        }
+    }
+
+    suspend fun resetControllerMappings() {
+        context.dataStore.edit { preferences ->
+            ControllerAction.entries.forEach { action ->
+                preferences.remove(controllerMappingKey(action))
+            }
         }
     }
 }

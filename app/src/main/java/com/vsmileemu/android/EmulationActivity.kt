@@ -1,10 +1,15 @@
 package com.vsmileemu.android
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
+import android.hardware.input.InputManager
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -40,7 +45,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.lifecycle.lifecycleScope
+import com.vsmileemu.android.controller.ColorButtonAnchor
+import com.vsmileemu.android.controller.ColorButtonLayout
+import com.vsmileemu.android.controller.ControllerAction
 import com.vsmileemu.android.core.EmulatorCore
 import com.vsmileemu.android.data.preferences.AppPreferences
 import com.vsmileemu.android.native_bridge.ControllerInput
@@ -54,21 +65,24 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.abs
 import kotlin.math.roundToInt
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.graphics.TransformOrigin
 
 class EmulationActivity : ComponentActivity() {
     
     companion object {
         private const val TAG = "EmulationActivity"
+        private const val NTSC_FRAME_TIME_NS = 16_666_667L
+        private const val PAL_FRAME_TIME_NS = 20_000_000L
+        private const val NTSC_AUDIO_FRAMES = 800
+        private const val PAL_AUDIO_FRAMES = 960
     }
     
     private lateinit var emulator: EmulatorCore
     private lateinit var storageHelper: StorageHelper
     private lateinit var appPreferences: AppPreferences
     private lateinit var audioManager: AudioManager
+    private lateinit var inputManager: InputManager
     
     private var emulationJob: Job? = null
     private var isRunning = false
@@ -98,13 +112,53 @@ class EmulationActivity : ComponentActivity() {
     
     private val _fastMath = MutableStateFlow(true)
     val fastMath: StateFlow<Boolean> = _fastMath
+
+    private val _hideControllerWhenExternal = MutableStateFlow(false)
+    val hideControllerWhenExternal: StateFlow<Boolean> = _hideControllerWhenExternal
+
+    private val _externalControllerConnected = MutableStateFlow(false)
+    val externalControllerConnected: StateFlow<Boolean> = _externalControllerConnected
+
+    private var virtualControllerInput: ControllerInput = ControllerInput.EMPTY
+    private var hardwareControllerInput: ControllerInput = ControllerInput.EMPTY
+    
+    private var usePalTiming = true
+    private var targetFrameTimeNanos = PAL_FRAME_TIME_NS
+    private var audioFramesPerVideoFrame = PAL_AUDIO_FRAMES
     
     // Audio resampler converts SPU output (281.25 kHz) to 48 kHz for AudioTrack
-    private val audioResampler = AudioResampler()
+    private val audioResampler = AudioResampler(targetFramesPerVideoFrame = PAL_AUDIO_FRAMES)
+
+    private val _controllerLayout = MutableStateFlow(ColorButtonLayout.GRID)
+    val controllerLayout: StateFlow<ColorButtonLayout> = _controllerLayout
+
+    private val _controllerAnchor = MutableStateFlow(ColorButtonAnchor.RIGHT)
+    val controllerAnchor: StateFlow<ColorButtonAnchor> = _controllerAnchor
+
+    private val _controllerMappings = MutableStateFlow(
+        ControllerAction.entries.associateWith { it.defaultKeyCode }
+    )
+    val controllerMappings: StateFlow<Map<ControllerAction, Int>> = _controllerMappings
+    private var controllerMappingByKey: Map<Int, ControllerAction> =
+        ControllerAction.entries.associateBy { it.defaultKeyCode }
     
     // Frame counter for debugging
     private var frameCount = 0L
     private var lastFpsTime = System.currentTimeMillis()
+
+    private val inputDeviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) {
+            updateExternalControllerState()
+        }
+
+        override fun onInputDeviceRemoved(deviceId: Int) {
+            updateExternalControllerState()
+        }
+
+        override fun onInputDeviceChanged(deviceId: Int) {
+            updateExternalControllerState()
+        }
+    }
     
     enum class PixelScale(val displayName: String, val description: String, val scaleFraction: Float) {
         SMALL("Small", "50% of screen width", 0.5f),
@@ -139,11 +193,49 @@ class EmulationActivity : ComponentActivity() {
                     _showFps.value = show
                 }
             }
+
+            lifecycleScope.launch {
+                appPreferences.controllerLayout.collect { layout ->
+                    _controllerLayout.value = layout
+                }
+            }
+
+            lifecycleScope.launch {
+                appPreferences.controllerAnchor.collect { anchor ->
+                    _controllerAnchor.value = anchor
+                }
+            }
+
+            lifecycleScope.launch {
+                appPreferences.controllerMappings.collect { mappings ->
+                    _controllerMappings.value = mappings
+                    controllerMappingByKey = mappings.entries.associate { (action, keyCode) ->
+                        keyCode to action
+                    }
+                }
+            }
+
+            lifecycleScope.launch {
+                appPreferences.pixelScale.collect { scale ->
+                    val parsed = runCatching { PixelScale.valueOf(scale) }.getOrDefault(PixelScale.FIT_SCREEN)
+                    _pixelScale.value = parsed
+                }
+            }
+
+            lifecycleScope.launch {
+                appPreferences.hideVirtualControllerWhenExternal.collect { hide ->
+                    _hideControllerWhenExternal.value = hide
+                }
+            }
             
             audioManager = AudioManager()
             audioManager.initialize()
             Log.d(TAG, "AudioManager initialized")
             FileLogger.log("✓ AudioManager initialized")
+
+            inputManager = getSystemService(Context.INPUT_SERVICE) as InputManager
+            inputManager.registerInputDeviceListener(inputDeviceListener, null)
+            updateExternalControllerState()
             
             try {
                 Log.d(TAG, "Creating EmulatorCore (will load native library)...")
@@ -200,9 +292,22 @@ class EmulationActivity : ComponentActivity() {
                         showFps = showFps,
                         audioEnabled = audioEnabled,
                         pixelScale = pixelScale,
+                        hideControllerWhenExternal = hideControllerWhenExternal,
+                        externalControllerConnected = externalControllerConnected,
+                         colorButtonLayout = controllerLayout,
+                         colorButtonAnchor = controllerAnchor,
+                         controllerMappings = controllerMappings,
                         emulator = emulator,
                         onLoadRom = {
                             loadAndStartEmulation(Uri.parse(romUriString))
+                        },
+                        onVirtualInputChange = { input ->
+                            updateVirtualControllerInput(input)
+                        },
+                        onToggleFps = { enabled ->
+                            lifecycleScope.launch {
+                                appPreferences.setShowFps(enabled)
+                            }
                         },
                         onToggleAudio = { enabled ->
                             _audioEnabled.value = enabled
@@ -215,6 +320,34 @@ class EmulationActivity : ComponentActivity() {
                         },
                         onChangeScale = { scale ->
                             _pixelScale.value = scale
+                            lifecycleScope.launch {
+                                appPreferences.setPixelScale(scale.name)
+                            }
+                        },
+                        onToggleHideController = { enabled ->
+                            lifecycleScope.launch {
+                                appPreferences.setHideVirtualControllerWhenExternal(enabled)
+                            }
+                        },
+                        onChangeColorLayout = { layout ->
+                            lifecycleScope.launch {
+                                appPreferences.setControllerLayout(layout)
+                            }
+                        },
+                        onChangeColorAnchor = { anchor ->
+                            lifecycleScope.launch {
+                                appPreferences.setControllerAnchor(anchor)
+                            }
+                        },
+                        onUpdateControllerMapping = { action, keyCode ->
+                            lifecycleScope.launch {
+                                appPreferences.setControllerMapping(action, keyCode)
+                            }
+                        },
+                        onResetControllerMappings = {
+                            lifecycleScope.launch {
+                                appPreferences.resetControllerMappings()
+                            }
                         },
                         onBack = { finish() }
                     )
@@ -228,6 +361,184 @@ class EmulationActivity : ComponentActivity() {
             FileLogger.logError("✗✗✗ FATAL ERROR in onCreate()", e)
             throw e
         }
+    }
+    
+    private fun configureTiming(usePal: Boolean) {
+        usePalTiming = usePal
+        targetFrameTimeNanos = if (usePal) PAL_FRAME_TIME_NS else NTSC_FRAME_TIME_NS
+        audioFramesPerVideoFrame = if (usePal) PAL_AUDIO_FRAMES else NTSC_AUDIO_FRAMES
+        audioResampler.updateTargetFramesPerVideoFrame(audioFramesPerVideoFrame)
+        FileLogger.log("Timing configured: ${if (usePal) "PAL 50Hz" else "NTSC 60Hz"}")
+        Log.i(TAG, "Timing configured: usePal=$usePal, targetFrameTime=$targetFrameTimeNanos ns, audioFrames=$audioFramesPerVideoFrame")
+    }
+
+    private fun updateVirtualControllerInput(input: ControllerInput) {
+        if (virtualControllerInput != input) {
+            virtualControllerInput = input
+            sendCombinedInput()
+        }
+    }
+
+    private fun updateHardwareInput(transform: (ControllerInput) -> ControllerInput) {
+        val newInput = transform(hardwareControllerInput)
+        if (newInput != hardwareControllerInput) {
+            hardwareControllerInput = newInput
+            sendCombinedInput()
+        }
+    }
+
+    private fun sendCombinedInput() {
+        if (!::emulator.isInitialized || !isEmulatorInitialized) return
+        val combined = combineInputs(virtualControllerInput, hardwareControllerInput)
+        emulator.sendInput(
+            enter = combined.enter,
+            help = combined.help,
+            back = combined.back,
+            abc = combined.abc,
+            red = combined.red,
+            yellow = combined.yellow,
+            blue = combined.blue,
+            green = combined.green,
+            joyX = combined.joystickX,
+            joyY = combined.joystickY
+        )
+    }
+
+    private fun combineInputs(virtual: ControllerInput, hardware: ControllerInput): ControllerInput {
+        return ControllerInput(
+            enter = virtual.enter || hardware.enter,
+            help = virtual.help || hardware.help,
+            back = virtual.back || hardware.back,
+            abc = virtual.abc || hardware.abc,
+            red = virtual.red || hardware.red,
+            yellow = virtual.yellow || hardware.yellow,
+            blue = virtual.blue || hardware.blue,
+            green = virtual.green || hardware.green,
+            joystickX = if (hardware.joystickX != 0) hardware.joystickX else virtual.joystickX,
+            joystickY = if (hardware.joystickY != 0) hardware.joystickY else virtual.joystickY
+        )
+    }
+
+    private fun isControllerSource(source: Int): Boolean {
+        return source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
+            source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+    }
+
+    private fun handleControllerKey(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            return false
+        }
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        updateExternalControllerState()
+        val mappedAction = controllerMappingByKey[event.keyCode]
+        if (mappedAction != null) {
+            return handleMappedAction(mappedAction, pressed)
+        }
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                updateHardwareInput { current ->
+                    val newX = if (pressed) -5 else if (current.joystickX == -5) 0 else current.joystickX
+                    current.copy(joystickX = newX)
+                }
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                updateHardwareInput { current ->
+                    val newX = if (pressed) 5 else if (current.joystickX == 5) 0 else current.joystickX
+                    current.copy(joystickX = newX)
+                }
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_UP -> {
+                updateHardwareInput { current ->
+                    val newY = if (pressed) 5 else if (current.joystickY == 5) 0 else current.joystickY
+                    current.copy(joystickY = newY)
+                }
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                updateHardwareInput { current ->
+                    val newY = if (pressed) -5 else if (current.joystickY == -5) 0 else current.joystickY
+                    current.copy(joystickY = newY)
+                }
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_BUTTON_MODE -> {
+                handleMappedAction(ControllerAction.ENTER, pressed)
+            }
+            else -> false
+        }
+    }
+
+    private fun handleControllerMotion(event: MotionEvent): Boolean {
+        if (event.action != MotionEvent.ACTION_MOVE) return false
+        updateExternalControllerState()
+
+        val horizontal = resolveAxis(event, MotionEvent.AXIS_X, MotionEvent.AXIS_HAT_X)
+        val vertical = -resolveAxis(event, MotionEvent.AXIS_Y, MotionEvent.AXIS_HAT_Y)
+
+        updateHardwareInput { it.copy(joystickX = horizontal, joystickY = vertical) }
+        return true
+    }
+
+    private fun handleMappedAction(action: ControllerAction, pressed: Boolean): Boolean {
+        when (action) {
+            ControllerAction.ENTER -> updateHardwareInput { it.copy(enter = pressed) }
+            ControllerAction.BACK -> updateHardwareInput { it.copy(back = pressed) }
+            ControllerAction.HELP -> updateHardwareInput { it.copy(help = pressed) }
+            ControllerAction.ABC -> updateHardwareInput { it.copy(abc = pressed) }
+            ControllerAction.RED -> updateHardwareInput { it.copy(red = pressed) }
+            ControllerAction.YELLOW -> updateHardwareInput { it.copy(yellow = pressed) }
+            ControllerAction.BLUE -> updateHardwareInput { it.copy(blue = pressed) }
+            ControllerAction.GREEN -> updateHardwareInput { it.copy(green = pressed) }
+        }
+        return true
+    }
+
+    private fun resolveAxis(event: MotionEvent, primaryAxis: Int, hatAxis: Int): Int {
+        val primary = getCenteredAxisValue(event, primaryAxis)
+        if (abs(primary) > 0.2f) {
+            return (primary * 5f).roundToInt().coerceIn(-5, 5)
+        }
+        val hat = getCenteredAxisValue(event, hatAxis)
+        return when {
+            hat > 0.5f -> 5
+            hat < -0.5f -> -5
+            else -> 0
+        }
+    }
+
+    private fun getCenteredAxisValue(event: MotionEvent, axis: Int): Float {
+        val device = event.device ?: return 0f
+        val range = device.getMotionRange(axis, event.source) ?: return 0f
+        val value = event.getAxisValue(axis)
+        return if (abs(value) > range.flat) value else 0f
+    }
+
+    private fun updateExternalControllerState() {
+        val connected = InputDevice.getDeviceIds().any { deviceId ->
+            val device = InputDevice.getDevice(deviceId)
+            device != null && isGameController(device)
+        }
+        if (_externalControllerConnected.value != connected) {
+            _externalControllerConnected.value = connected
+            FileLogger.log("External controller connected: $connected")
+        }
+        if (!connected && hardwareControllerInput != ControllerInput.EMPTY) {
+            hardwareControllerInput = ControllerInput.EMPTY
+            sendCombinedInput()
+        }
+    }
+
+    private fun isGameController(device: InputDevice?): Boolean {
+        if (device == null || device.isVirtual) return false
+        val sources = device.sources
+        val hasGamepad = sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
+        val hasJoystick = sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        val hasDpad = sources and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+        return hasGamepad || hasJoystick || hasDpad
     }
     
     private fun loadAndStartEmulation(romUri: Uri) {
@@ -286,10 +597,14 @@ class EmulationActivity : ComponentActivity() {
                 FileLogger.logVar("romData", "${romData.size} bytes")
                 FileLogger.logVar("usePAL", true)
                 
+                val usePal = true
+                configureTiming(usePal)
+                audioResampler.reset()
+                
                 val success = emulator.initialize(
                     sysrom = biosData,
                     cartrom = romData,
-                    usePAL = true  // Default to PAL timing
+                    usePAL = usePal  // Default to PAL timing
                 )
                 
                 FileLogger.logVar("emulator.initialize() result", success)
@@ -394,7 +709,6 @@ class EmulationActivity : ComponentActivity() {
         emulationJob = lifecycleScope.launch(Dispatchers.Default) {
             var frameNumber = 0
             var lastFrameTime = System.nanoTime()
-            val targetFrameTime = 16_666_667L // 60 FPS in nanoseconds
             
             Log.e(TAG, "✓✓✓ Inside emulation coroutine! Loop starting...")
             FileLogger.log("✓✓✓ Inside emulation coroutine!")
@@ -484,9 +798,10 @@ class EmulationActivity : ComponentActivity() {
                     // Frame limiter: Sleep for remaining time to hit 60 FPS
                     val frameEndTime = System.nanoTime()
                     val frameTime = frameEndTime - frameStartTime
-                    val sleepTime = (targetFrameTime - frameTime) / 1_000_000 // Convert to milliseconds
-                    if (sleepTime > 0) {
-                        delay(sleepTime)
+                    val targetFrameTime = targetFrameTimeNanos
+                    val sleepTimeMs = (targetFrameTime - frameTime) / 1_000_000 // Convert to milliseconds
+                    if (sleepTimeMs > 0) {
+                        delay(sleepTimeMs)
                     }
                     
                     lastFrameTime = frameEndTime
@@ -540,9 +855,27 @@ class EmulationActivity : ComponentActivity() {
             FileLogger.log("✓ Emulator destroyed")
         }
         
+        if (::inputManager.isInitialized) {
+            inputManager.unregisterInputDeviceListener(inputDeviceListener)
+        }
+
         FileLogger.log("═══════════════════════════════════════════")
         FileLogger.log("Session ended - closing log file")
         FileLogger.close()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (isControllerSource(event.source) && handleControllerKey(event)) {
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (isControllerSource(event.source) && handleControllerMotion(event)) {
+            return true
+        }
+        return super.dispatchGenericMotionEvent(event)
     }
 }
 
@@ -554,10 +887,22 @@ fun EmulationScreen(
     showFps: StateFlow<Boolean>,
     audioEnabled: StateFlow<Boolean>,
     pixelScale: StateFlow<EmulationActivity.PixelScale>,
+    hideControllerWhenExternal: StateFlow<Boolean>,
+    externalControllerConnected: StateFlow<Boolean>,
+    colorButtonLayout: StateFlow<ColorButtonLayout>,
+    colorButtonAnchor: StateFlow<ColorButtonAnchor>,
+    controllerMappings: StateFlow<Map<ControllerAction, Int>>,
     emulator: EmulatorCore,
     onLoadRom: () -> Unit,
+    onVirtualInputChange: (ControllerInput) -> Unit,
+    onToggleFps: (Boolean) -> Unit,
     onToggleAudio: (Boolean) -> Unit,
     onChangeScale: (EmulationActivity.PixelScale) -> Unit,
+    onToggleHideController: (Boolean) -> Unit,
+    onChangeColorLayout: (ColorButtonLayout) -> Unit,
+    onChangeColorAnchor: (ColorButtonAnchor) -> Unit,
+    onUpdateControllerMapping: (ControllerAction, Int) -> Unit,
+    onResetControllerMappings: () -> Unit,
     onBack: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
@@ -569,6 +914,15 @@ fun EmulationScreen(
     val isFpsVisible by showFps.collectAsState()
     val audio by audioEnabled.collectAsState()
     val scale by pixelScale.collectAsState()
+    val hideController by hideControllerWhenExternal.collectAsState()
+    val controllerConnected by externalControllerConnected.collectAsState()
+    val layout by colorButtonLayout.collectAsState()
+    val anchor by colorButtonAnchor.collectAsState()
+    val controllerMapping by controllerMappings.collectAsState()
+    val shouldShowVirtualController = remember(showSettings, hideController, controllerConnected) {
+        !showSettings && (!hideController || !controllerConnected)
+    }
+    var showConnectionBanner by remember { mutableStateOf(false) }
     
     LaunchedEffect(Unit) {
         onLoadRom()
@@ -576,20 +930,25 @@ fun EmulationScreen(
         isLoading = false
     }
     
-    // Send input to emulator whenever it changes
+    // Forward virtual controller updates to activity
     LaunchedEffect(currentInput) {
-        emulator.sendInput(
-            enter = currentInput.enter,
-            help = currentInput.help,
-            back = currentInput.back,
-            abc = currentInput.abc,
-            red = currentInput.red,
-            yellow = currentInput.yellow,
-            blue = currentInput.blue,
-            green = currentInput.green,
-            joyX = currentInput.joystickX,
-            joyY = currentInput.joystickY
-        )
+        onVirtualInputChange(currentInput)
+    }
+
+    LaunchedEffect(shouldShowVirtualController) {
+        if (!shouldShowVirtualController && currentInput != ControllerInput.EMPTY) {
+            currentInput = ControllerInput.EMPTY
+        }
+    }
+
+    LaunchedEffect(controllerConnected, hideController) {
+        if (controllerConnected && hideController) {
+            showConnectionBanner = true
+            delay(2500)
+            showConnectionBanner = false
+        } else {
+            showConnectionBanner = false
+        }
     }
     
     Column(
@@ -681,16 +1040,26 @@ fun EmulationScreen(
                     pixelScale = scale,
                     frameSkip = false, // TODO: implement
                     fastMath = true, // Already enabled in build
-                    onToggleFps = { /* FPS toggle handled in app settings */ },
+                    hideControllerWhenExternal = hideController,
+                    controllerConnected = controllerConnected,
+                    controllerLayout = layout,
+                    controllerAnchor = anchor,
+                    controllerMappings = controllerMapping,
+                    onToggleFps = onToggleFps,
                     onToggleAudio = { onToggleAudio(it) },
                     onChangeScale = { onChangeScale(it) },
                     onToggleFrameSkip = { /* TODO */ },
                     onToggleFastMath = { /* Already enabled */ },
+                    onToggleHideController = onToggleHideController,
+                    onChangeControllerLayout = onChangeColorLayout,
+                    onChangeControllerAnchor = onChangeColorAnchor,
+                    onUpdateControllerMapping = onUpdateControllerMapping,
+                    onResetControllerMappings = onResetControllerMappings,
                     onBack = { showSettings = false }
                 )
             }
 
-            if (!showSettings) {
+            if (shouldShowVirtualController) {
                 VirtualController(
                     onInputChange = { newInput ->
                         currentInput = newInput
@@ -698,7 +1067,27 @@ fun EmulationScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .height(200.dp)
+                        .height(200.dp),
+                    colorLayout = layout,
+                    colorAnchor = anchor
+                )
+            }
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showConnectionBanner,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 16.dp)
+            ) {
+                Text(
+                    text = "External controller active",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
         }
@@ -800,7 +1189,7 @@ fun InGameSettingsScreen(
 private class AudioResampler(
     private val inputSampleRate: Int = 281_250,
     private val outputSampleRate: Int = 48_000,
-    private val targetFramesPerVideoFrame: Int = 800  // 48kHz / 60fps
+    private var targetFramesPerVideoFrame: Int = 800  // 48kHz / 60fps
 ) {
     private var leftover = ShortArray(0)
 
@@ -854,6 +1243,14 @@ private class AudioResampler(
         } else ShortArray(0)
 
         return chunks
+    }
+
+    fun updateTargetFramesPerVideoFrame(frames: Int) {
+        targetFramesPerVideoFrame = frames.coerceAtLeast(1)
+    }
+
+    fun reset() {
+        leftover = ShortArray(0)
     }
 
     private fun interpolate(a: Short, b: Short, fraction: Double): Short {

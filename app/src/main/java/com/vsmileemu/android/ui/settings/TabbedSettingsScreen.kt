@@ -1,6 +1,7 @@
 package com.vsmileemu.android.ui.settings
 
 import androidx.activity.compose.BackHandler
+import android.view.KeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -12,9 +13,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.vsmileemu.android.EmulationActivity
+import com.vsmileemu.android.controller.ColorButtonAnchor
+import com.vsmileemu.android.controller.ColorButtonLayout
+import com.vsmileemu.android.controller.ControllerAction
+import com.vsmileemu.android.controller.ControllerKeyOption
+import com.vsmileemu.android.controller.controllerKeyOptions
 
 enum class SettingsTab {
-    GENERAL, EMULATION, CPU, AUDIO
+    GENERAL, EMULATION, CPU, AUDIO, CONTROLLER
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -25,11 +31,21 @@ fun TabbedSettingsScreen(
     pixelScale: EmulationActivity.PixelScale,
     frameSkip: Boolean,
     fastMath: Boolean,
+    hideControllerWhenExternal: Boolean,
+    controllerConnected: Boolean,
+    controllerLayout: ColorButtonLayout,
+    controllerAnchor: ColorButtonAnchor,
+    controllerMappings: Map<ControllerAction, Int>,
     onToggleFps: (Boolean) -> Unit,
     onToggleAudio: (Boolean) -> Unit,
     onChangeScale: (EmulationActivity.PixelScale) -> Unit,
     onToggleFrameSkip: (Boolean) -> Unit,
     onToggleFastMath: (Boolean) -> Unit,
+    onToggleHideController: (Boolean) -> Unit,
+    onChangeControllerLayout: (ColorButtonLayout) -> Unit,
+    onChangeControllerAnchor: (ColorButtonAnchor) -> Unit,
+    onUpdateControllerMapping: (ControllerAction, Int) -> Unit,
+    onResetControllerMappings: () -> Unit,
     onBack: () -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(SettingsTab.GENERAL) }
@@ -79,6 +95,11 @@ fun TabbedSettingsScreen(
                     onClick = { selectedTab = SettingsTab.AUDIO },
                     text = { Text("Audio") }
                 )
+                Tab(
+                    selected = selectedTab == SettingsTab.CONTROLLER,
+                    onClick = { selectedTab = SettingsTab.CONTROLLER },
+                    text = { Text("Controller") }
+                )
             }
             
             // Tab Content
@@ -92,6 +113,19 @@ fun TabbedSettingsScreen(
                 )
                 SettingsTab.CPU -> CpuSettings(fastMath, onToggleFastMath)
                 SettingsTab.AUDIO -> AudioSettings(audioEnabled, onToggleAudio)
+                SettingsTab.CONTROLLER -> ControllerSettings(
+                    hideControllerWhenExternal = hideControllerWhenExternal,
+                    controllerConnected = controllerConnected,
+                    currentLayout = controllerLayout,
+                    currentAnchor = controllerAnchor,
+                    mappings = controllerMappings,
+                    availableKeys = controllerKeyOptions,
+                    onToggleHideController = onToggleHideController,
+                    onChangeLayout = onChangeControllerLayout,
+                    onChangeAnchor = onChangeControllerAnchor,
+                    onUpdateMapping = onUpdateControllerMapping,
+                    onResetMappings = onResetControllerMappings
+                )
             }
         }
     }
@@ -319,6 +353,191 @@ fun AudioSettings(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ControllerSettings(
+    hideControllerWhenExternal: Boolean,
+    controllerConnected: Boolean,
+    currentLayout: ColorButtonLayout,
+    currentAnchor: ColorButtonAnchor,
+    mappings: Map<ControllerAction, Int>,
+    availableKeys: List<ControllerKeyOption>,
+    onToggleHideController: (Boolean) -> Unit,
+    onChangeLayout: (ColorButtonLayout) -> Unit,
+    onChangeAnchor: (ColorButtonAnchor) -> Unit,
+    onUpdateMapping: (ControllerAction, Int) -> Unit,
+    onResetMappings: () -> Unit
+) {
+    val scrollState = rememberScrollState()
+    val keyLabelMap = remember(availableKeys) {
+        availableKeys.associate { it.keyCode to it.label }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            "Controller Settings",
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Hide Virtual Controller",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            "Automatically hide when a gamepad is connected",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = hideControllerWhenExternal,
+                        onCheckedChange = onToggleHideController
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    if (controllerConnected) "External controller detected"
+                    else "No external controller connected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (controllerConnected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "Virtual Controller Layout",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    "Choose how the on-screen color buttons are arranged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ColorButtonLayout.entries.forEach { layout ->
+                        FilterChip(
+                            selected = currentLayout == layout,
+                            onClick = { onChangeLayout(layout) },
+                            label = { Text(layout.displayName) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "Button Anchor",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ColorButtonAnchor.entries.forEach { anchor ->
+                        FilterChip(
+                            selected = currentAnchor == anchor,
+                            onClick = { onChangeAnchor(anchor) },
+                            label = { Text(anchor.displayName) }
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "Controller Mapping",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    "Tap an action to assign a different hardware button.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                ControllerAction.entries.forEach { action ->
+                    var expanded by remember { mutableStateOf(false) }
+                    val currentKey = mappings[action] ?: action.defaultKeyCode
+                    val currentLabel = keyLabelMap[currentKey]
+                        ?: KeyEvent.keyCodeToString(currentKey).removePrefix("KEYCODE_")
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(action.displayName, style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    currentLabel,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Box {
+                                    OutlinedButton(onClick = { expanded = true }) {
+                                        Text("Change")
+                                    }
+                                    DropdownMenu(
+                                        expanded = expanded,
+                                        onDismissRequest = { expanded = false }
+                                    ) {
+                                        availableKeys.forEach { option ->
+                                            DropdownMenuItem(
+                                                text = { Text(option.label) },
+                                                onClick = {
+                                                    expanded = false
+                                                    onUpdateMapping(action, option.keyCode)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(onClick = onResetMappings) {
+                    Text("Reset to defaults")
                 }
             }
         }
